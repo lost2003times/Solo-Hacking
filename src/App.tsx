@@ -16,7 +16,7 @@ export default function CompleteCyberSystem() {
   const [log, setLog] = useState(() => JSON.parse(localStorage.getItem("cs_log")) || []);
   const [penalty, setPenalty] = useState(() => Number(localStorage.getItem("cs_penalty")) || 0);
   const [lastSync, setLastSync] = useState(() => localStorage.getItem("cs_last_sync") || null);
-  const [showArchive, setShowArchive] = useState(false); // NEW: Archive State
+  const [showArchive, setShowArchive] = useState(false);
   
   const [recoveryUsed, setRecoveryUsed] = useState(() => {
     const saved = JSON.parse(localStorage.getItem("cs_recovery"));
@@ -26,7 +26,8 @@ export default function CompleteCyberSystem() {
   });
 
   const [tasks, setTasks] = useState({ lab: false, academic: false, news: false });
-  const [workDetails, setWorkDetails] = useState({ lab: "", academic: "", news: "" });
+  // ADDED: revision field for recovery days
+  const [workDetails, setWorkDetails] = useState({ lab: "", academic: "", news: "", revision: "" });
   const [quality, setQuality] = useState("full");
 
   const level = Math.floor(xp / 150) + 1;
@@ -71,11 +72,28 @@ export default function CompleteCyberSystem() {
   const todayStr = new Date().toLocaleDateString('en-GB');
   const isAlreadySynced = log.length > 0 && log[0].date === todayStr;
 
-  const isIntegrityVerified = workDetails.lab.trim().length > 10 && workDetails.academic.trim().length > 10 && workDetails.news.trim().length > 5;
-  const canSubmit = tasks.news && (tasks.lab || tasks.academic) && isIntegrityVerified && !isAlreadySynced;
-
+  // --- NEW DYNAMIC VALIDATION LOGIC ---
+  const isNewsValid = tasks.news && workDetails.news.trim().length > 5;
+  let isPrimaryValid = false;
+  let potentialXp = 0;
   const qualityMod = quality === "full" ? 1 : quality === "reduced" ? 0.6 : 0.4;
-  const potentialXp = Math.round(((tasks.lab ? 50 : 0) + (tasks.academic ? 50 : 0) + (tasks.news ? 10 : 0)) * qualityMod);
+
+  if (quality === "recovery") {
+    isPrimaryValid = workDetails.revision.trim().length > 10;
+    // Base 50 for doing revision + 10 for news, multiplied by recovery modifier (0.4)
+    potentialXp = Math.round((50 + (tasks.news ? 10 : 0)) * qualityMod);
+  } else {
+    const isLabValid = tasks.lab && workDetails.lab.trim().length > 10;
+    const isAcademicValid = tasks.academic && workDetails.academic.trim().length > 10;
+    
+    // Valid if AT LEAST ONE is done properly
+    isPrimaryValid = isLabValid || isAcademicValid;
+    
+    // Calculate XP (Bonus is naturally added if both are true)
+    potentialXp = Math.round(((isLabValid ? 50 : 0) + (isAcademicValid ? 50 : 0) + (tasks.news ? 10 : 0)) * qualityMod);
+  }
+
+  const canSubmit = isNewsValid && isPrimaryValid && !isAlreadySynced;
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -94,8 +112,9 @@ export default function CompleteCyberSystem() {
       id: Math.random().toString(36).toUpperCase().substring(2, 7),
       date: todayStr,
       xp: potentialXp,
-      labNote: workDetails.lab,
-      academicNote: workDetails.academic,
+      labNote: quality === "recovery" ? "N/A" : workDetails.lab,
+      academicNote: quality === "recovery" ? "N/A" : workDetails.academic,
+      revisionNote: quality === "recovery" ? workDetails.revision : "N/A",
       newsNote: workDetails.news,
       quality: quality
     }, ...prev]);
@@ -127,13 +146,19 @@ export default function CompleteCyberSystem() {
               {log.map((entry) => (
                 <div key={entry.id} style={styles.logEntry}>
                   <div style={styles.logHeader}>
-                    <span>{entry.date} | HASH: {entry.id}</span>
+                    <span>{entry.date} | HASH: {entry.id} | MODE: {entry.quality.toUpperCase()}</span>
                     <span style={{color: THEME.success}}>+{entry.xp} XP</span>
                   </div>
                   <div style={styles.logBody}>
-                    <p><strong style={{color: THEME.accent}}>LAB:</strong> {entry.labNote || "N/A"}</p>
-                    <p><strong style={{color: THEME.accent}}>ACADEMIC:</strong> {entry.academicNote || "N/A"}</p>
-                    <p><strong style={{color: THEME.accent}}>INTEL:</strong> {entry.newsNote || "N/A"}</p>
+                    {entry.quality === 'recovery' ? (
+                       <p><strong style={{color: THEME.accent}}>REVISION:</strong> {entry.revisionNote}</p>
+                    ) : (
+                      <>
+                        <p><strong style={{color: THEME.accent}}>LAB:</strong> {entry.labNote || "Skipped"}</p>
+                        <p><strong style={{color: THEME.accent}}>ACADEMIC:</strong> {entry.academicNote || "Skipped"}</p>
+                      </>
+                    )}
+                    <p><strong style={{color: THEME.accent}}>INTEL:</strong> {entry.newsNote}</p>
                   </div>
                 </div>
               ))}
@@ -145,7 +170,7 @@ export default function CompleteCyberSystem() {
       <div style={styles.layout}>
         {/* LEFT: PLAYER DATAFRAME */}
         <aside style={styles.card}>
-          <div className="glitch-text" style={styles.label}>[ SYSTEM_MONITOR_v10 ]</div>
+          <div className="glitch-text" style={styles.label}>[ SYSTEM_MONITOR_v11 ]</div>
           <div style={{...styles.status, color: penalty > 0 ? THEME.danger : THEME.accent}}>
             {penalty > 0 ? "STATUS: DEGRADED" : "STATUS: OPTIMAL"}
           </div>
@@ -182,34 +207,47 @@ export default function CompleteCyberSystem() {
           ) : (
             <>
               <h2 style={styles.label}>DAILY_INTEGRITY_REPORT</h2>
-              <div style={styles.field}>
-                <label style={{color: tasks.lab ? THEME.success : THEME.text}}><input type="checkbox" checked={tasks.lab} onChange={()=>setTasks({...tasks, lab: !tasks.lab})}/> PENETRATION_LAB [50 XP]</label>
-                <textarea style={styles.area} placeholder="Detail findings/exploits (Min 10 chars)..." value={workDetails.lab} onChange={e=>setWorkDetails({...workDetails, lab: e.target.value})} />
-              </div>
-              <div style={styles.field}>
-                <label style={{color: tasks.academic ? THEME.success : THEME.text}}><input type="checkbox" checked={tasks.academic} onChange={()=>setTasks({...tasks, academic: !tasks.academic})}/> ACADEMIC_PROTOCOL [50 XP]</label>
-                <textarea style={styles.area} placeholder="Core concepts learned (Min 10 chars)..." value={workDetails.academic} onChange={e=>setWorkDetails({...workDetails, academic: e.target.value})} />
-              </div>
-              <div style={styles.field}>
-                <label style={{color: tasks.news ? THEME.success : THEME.text}}><input type="checkbox" checked={tasks.news} onChange={()=>setTasks({...tasks, news: !tasks.news})}/> CYBER_NEWS_INTEL [10 XP]</label>
-                <input style={styles.input} placeholder="Today's headline (Min 5 chars)..." value={workDetails.news} onChange={e=>setWorkDetails({...workDetails, news: e.target.value})} />
+              
+              {/* MOVED DROPDOWN TO THE TOP */}
+              <div style={{marginBottom: '25px', paddingBottom: '15px', borderBottom: '1px solid #1a2233'}}>
+                <label style={{fontSize: '0.6rem', color: THEME.accent}}>1. SELECT_EXECUTION_MODE</label>
+                <select style={styles.select} value={quality} onChange={e=>setQuality(e.target.value)}>
+                  <option value="full">OVERDRIVE [1.0x]</option>
+                  <option value="reduced">STABILIZED [0.6x]</option>
+                  <option value="recovery">REGEN/REVISION [0.4x] (-1 Cell)</option>
+                </select>
               </div>
 
-              <div style={styles.footerRow}>
-                <div style={{flex: 1}}>
-                  <label style={{fontSize: '0.6rem', color: THEME.accent}}>EXECUTION_QUALITY</label>
-                  <select style={styles.select} value={quality} onChange={e=>setQuality(e.target.value)}>
-                    <option value="full">OVERDRIVE [1.0x]</option>
-                    <option value="reduced">STABILIZED [0.6x]</option>
-                    <option value="recovery">REGEN [0.4x] (-1 Cell)</option>
-                  </select>
+              {quality === "recovery" ? (
+                /* RECOVERY MODE UI */
+                <div style={styles.field}>
+                  <label style={{color: workDetails.revision.length > 10 ? THEME.success : THEME.text}}>REVISION_PROTOCOL [Base 50 XP]</label>
+                  <textarea style={styles.area} placeholder="What past concepts did you revise today? (Min 10 chars)..." value={workDetails.revision} onChange={e=>setWorkDetails({...workDetails, revision: e.target.value})} />
                 </div>
-                <div style={{flex: 1.5}}>
-                   <button style={{...styles.submit, borderColor: canSubmit ? THEME.success : '#222', color: canSubmit ? THEME.success : '#444'}} disabled={!canSubmit} onClick={handleSubmit}>
-                    {canSubmit ? `UPLOAD DATA [+${potentialXp} XP]` : "INTEGRITY_LOW"}
-                  </button>
-                </div>
+              ) : (
+                /* NORMAL MODE UI */
+                <>
+                  <p style={{fontSize: '0.7rem', opacity: 0.5, marginBottom: '15px'}}>* Complete AT LEAST ONE primary objective (Lab or Academic).</p>
+                  <div style={styles.field}>
+                    <label style={{color: tasks.lab ? THEME.success : THEME.text}}><input type="checkbox" checked={tasks.lab} onChange={()=>setTasks({...tasks, lab: !tasks.lab})}/> PENETRATION_LAB [50 XP]</label>
+                    <textarea style={styles.area} placeholder="Detail findings/exploits (Min 10 chars)..." value={workDetails.lab} onChange={e=>setWorkDetails({...workDetails, lab: e.target.value})} />
+                  </div>
+                  <div style={styles.field}>
+                    <label style={{color: tasks.academic ? THEME.success : THEME.text}}><input type="checkbox" checked={tasks.academic} onChange={()=>setTasks({...tasks, academic: !tasks.academic})}/> ACADEMIC_PROTOCOL [50 XP]</label>
+                    <textarea style={styles.area} placeholder="Core concepts learned (Min 10 chars)..." value={workDetails.academic} onChange={e=>setWorkDetails({...workDetails, academic: e.target.value})} />
+                  </div>
+                </>
+              )}
+
+              {/* NEWS IS ALWAYS REQUIRED */}
+              <div style={styles.field}>
+                <label style={{color: tasks.news ? THEME.success : THEME.text}}><input type="checkbox" checked={tasks.news} onChange={()=>setTasks({...tasks, news: !tasks.news})}/> CYBER_NEWS_INTEL [10 XP]</label>
+                <input style={styles.input} placeholder="Today's mandatory headline (Min 5 chars)..." value={workDetails.news} onChange={e=>setWorkDetails({...workDetails, news: e.target.value})} />
               </div>
+
+              <button style={{...styles.submit, borderColor: canSubmit ? THEME.success : '#222', color: canSubmit ? THEME.success : '#444', marginTop: '15px'}} disabled={!canSubmit} onClick={handleSubmit}>
+                {canSubmit ? `UPLOAD DATA [+${potentialXp} XP]` : "INTEGRITY_REQUIREMENTS_NOT_MET"}
+              </button>
             </>
           )}
         </main>
@@ -247,8 +285,7 @@ const styles = {
   field: { marginBottom: '20px' },
   area: { width: '100%', background: 'rgba(0,0,0,0.6)', border: '1px solid #1a2233', color: '#fff', padding: '10px', marginTop: '8px', fontSize: '0.8rem', resize: 'none', height: '60px', outline: 'none' },
   input: { width: '100%', background: 'rgba(0,0,0,0.6)', border: '1px solid #1a2233', color: '#fff', padding: '10px', marginTop: '8px', fontSize: '0.8rem', outline: 'none' },
-  footerRow: { display: 'flex', gap: '15px', marginTop: '25px', alignItems: 'flex-end' },
-  select: { width: '100%', background: '#000', color: THEME.accent, border: '1px solid #1a2233', padding: '12px', marginTop: '5px', outline: 'none' },
+  select: { width: '100%', background: '#000', color: THEME.accent, border: '1px solid #1a2233', padding: '12px', marginTop: '5px', outline: 'none', cursor: 'pointer' },
   submit: { width: '100%', background: 'transparent', border: '1px solid', padding: '15px', fontWeight: 'bold', letterSpacing: '1px', cursor: 'pointer', transition: 'all 0.2s' },
   archiveBtn: { marginTop: '30px', width: '100%', background: `${THEME.accent}22`, border: `1px solid ${THEME.accent}`, color: THEME.accent, padding: '12px', cursor: 'pointer', fontWeight: 'bold', letterSpacing: '1px' },
   resetBtn: { marginTop: '15px', width: '100%', background: 'transparent', border: 'none', color: THEME.danger, fontSize: '0.6rem', cursor: 'pointer', opacity: 0.4, letterSpacing: '1px' },
