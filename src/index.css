@@ -1,1 +1,12 @@
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #020408; /* Matches your System's dark background */
+  overflow-x: hidden; /* Stops any weird side-scrolling */
+}
 
+* {
+  box-sizing: border-box;
+}
