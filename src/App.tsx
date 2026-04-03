@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import ArchiveView from "./ArchiveView";
 
 const THEME = {
   bg: "#020408",
@@ -16,17 +17,20 @@ export default function CompleteCyberSystem() {
   const [log, setLog] = useState(() => JSON.parse(localStorage.getItem("cs_log")) || []);
   const [penalty, setPenalty] = useState(() => Number(localStorage.getItem("cs_penalty")) || 0);
   const [lastSync, setLastSync] = useState(() => localStorage.getItem("cs_last_sync") || null);
-  const [showArchive, setShowArchive] = useState(false);
   
+  // NEW: View Router State
+  const [currentView, setCurrentView] = useState('hud'); 
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [recoveryUsed, setRecoveryUsed] = useState(() => {
-    const saved = JSON.parse(localStorage.getItem("cs_recovery"));
+    const saved = JSON.parse(localStorage.getItem("cs_recovery") || "null");
     const currentMonth = new Date().getMonth();
     if (saved && saved.month === currentMonth) return saved.count;
     return 0;
   });
 
   const [tasks, setTasks] = useState({ lab: false, academic: false, news: false });
-  // ADDED: revision field for recovery days
   const [workDetails, setWorkDetails] = useState({ lab: "", academic: "", news: "", revision: "" });
   const [quality, setQuality] = useState("full");
 
@@ -47,7 +51,7 @@ export default function CompleteCyberSystem() {
     if (lastSync) {
       const lastDate = new Date(lastSync);
       const now = new Date();
-      const hoursSince = (now - lastDate) / (1000 * 60 * 60);
+      const hoursSince = (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60);
 
       if (hoursSince > 36) {
         const missedDays = Math.floor(hoursSince / 24);
@@ -61,18 +65,17 @@ export default function CompleteCyberSystem() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("cs_xp", xp);
-    localStorage.setItem("cs_streak", streak);
+    localStorage.setItem("cs_xp", xp.toString());
+    localStorage.setItem("cs_streak", streak.toString());
     localStorage.setItem("cs_log", JSON.stringify(log));
-    localStorage.setItem("cs_penalty", penalty);
-    localStorage.setItem("cs_last_sync", lastSync);
+    localStorage.setItem("cs_penalty", penalty.toString());
+    if (lastSync) localStorage.setItem("cs_last_sync", lastSync);
     localStorage.setItem("cs_recovery", JSON.stringify({ count: recoveryUsed, month: new Date().getMonth() }));
   }, [xp, streak, log, penalty, lastSync, recoveryUsed]);
 
   const todayStr = new Date().toLocaleDateString('en-GB');
   const isAlreadySynced = log.length > 0 && log[0].date === todayStr;
 
-  // --- NEW DYNAMIC VALIDATION LOGIC ---
   const isNewsValid = tasks.news && workDetails.news.trim().length > 5;
   let isPrimaryValid = false;
   let potentialXp = 0;
@@ -80,20 +83,52 @@ export default function CompleteCyberSystem() {
 
   if (quality === "recovery") {
     isPrimaryValid = workDetails.revision.trim().length > 10;
-    // Base 50 for doing revision + 10 for news, multiplied by recovery modifier (0.4)
     potentialXp = Math.round((50 + (tasks.news ? 10 : 0)) * qualityMod);
   } else {
     const isLabValid = tasks.lab && workDetails.lab.trim().length > 10;
     const isAcademicValid = tasks.academic && workDetails.academic.trim().length > 10;
-    
-    // Valid if AT LEAST ONE is done properly
     isPrimaryValid = isLabValid || isAcademicValid;
-    
-    // Calculate XP (Bonus is naturally added if both are true)
     potentialXp = Math.round(((isLabValid ? 50 : 0) + (isAcademicValid ? 50 : 0) + (tasks.news ? 10 : 0)) * qualityMod);
   }
 
   const canSubmit = isNewsValid && isPrimaryValid && !isAlreadySynced;
+
+  const downloadBackup = (backupData: any) => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `cyber_backup_${new Date().toLocaleDateString('en-GB').replace(/\//g, '-')}.json`);
+    document.body.appendChild(downloadAnchorNode); 
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  const handleRestore = (event: any) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const importedData = JSON.parse(e.target?.result as string);
+        if (importedData.cs_log !== undefined && importedData.cs_xp !== undefined) {
+          setXp(importedData.cs_xp);
+          setStreak(importedData.cs_streak);
+          setPenalty(importedData.cs_penalty);
+          setLog(importedData.cs_log);
+          setLastSync(importedData.cs_last_sync);
+          setRecoveryUsed(importedData.cs_recovery?.count || 0);
+          alert("✅ SYSTEM RESTORED SUCCESSFULLY FROM BACKUP.");
+        } else {
+          alert("❌ ERROR: INVALID BACKUP FILE STRUCTURE.");
+        }
+      } catch (err) {
+        alert("❌ ERROR: CORRUPTED DATA FILE.");
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = null; 
+  };
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -101,14 +136,14 @@ export default function CompleteCyberSystem() {
       alert("CRITICAL: NO RECOVERY CYCLES REMAINING THIS MONTH.");
       return;
     }
-    if (quality === "recovery") setRecoveryUsed(prev => prev + 1);
 
-    setXp(p => p + potentialXp);
-    setStreak(p => p + 1);
-    setPenalty(p => Math.max(0, p - 1));
-    setLastSync(new Date().toISOString());
+    const newXp = xp + potentialXp;
+    const newStreak = streak + 1;
+    const newPenalty = Math.max(0, penalty - 1);
+    const newRecoveryUsed = quality === "recovery" ? recoveryUsed + 1 : recoveryUsed;
+    const newLastSync = new Date().toISOString();
     
-    setLog(prev => [{
+    const newLogEntry = {
       id: Math.random().toString(36).toUpperCase().substring(2, 7),
       date: todayStr,
       xp: potentialXp,
@@ -117,7 +152,25 @@ export default function CompleteCyberSystem() {
       revisionNote: quality === "recovery" ? workDetails.revision : "N/A",
       newsNote: workDetails.news,
       quality: quality
-    }, ...prev]);
+    };
+    
+    const newLog = [newLogEntry, ...log];
+
+    if (quality === "recovery") setRecoveryUsed(newRecoveryUsed);
+    setXp(newXp);
+    setStreak(newStreak);
+    setPenalty(newPenalty);
+    setLastSync(newLastSync);
+    setLog(newLog);
+
+    downloadBackup({
+      cs_xp: newXp,
+      cs_streak: newStreak,
+      cs_penalty: newPenalty,
+      cs_log: newLog,
+      cs_last_sync: newLastSync,
+      cs_recovery: { count: newRecoveryUsed, month: new Date().getMonth() }
+    });
   };
 
   const handleHardReset = () => {
@@ -127,50 +180,22 @@ export default function CompleteCyberSystem() {
     }
   };
 
+  // --- ROUTER INTERCEPT ---
+  // If the user clicked Archive, render the Tailwind Shadow Protocol component
+  if (currentView === 'archive') {
+    return <ArchiveView log={log} setView={setCurrentView} />;
+  }
+
+  // --- MAIN HUD RENDER ---
   return (
     <div style={styles.container}>
       <div style={styles.bgGrid} />
       <div style={styles.scanline} />
 
-      {/* --- ARCHIVE MODAL OVERLAY --- */}
-      {showArchive && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalContent}>
-            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, borderBottom: `1px solid ${THEME.accent}55`, paddingBottom: 10}}>
-              <h2 className="glitch-text" style={{margin: 0, color: THEME.accent}}>DECRYPTED_QUEST_ARCHIVE</h2>
-              <button onClick={() => setShowArchive(false)} style={styles.closeBtn}>[X] CLOSE</button>
-            </div>
-            
-            <div style={styles.logContainer}>
-              {log.length === 0 ? <p style={{opacity: 0.5, textAlign: 'center', marginTop: 50}}>NO RECORDS FOUND</p> : null}
-              {log.map((entry) => (
-                <div key={entry.id} style={styles.logEntry}>
-                  <div style={styles.logHeader}>
-                    <span>{entry.date} | HASH: {entry.id} | MODE: {entry.quality.toUpperCase()}</span>
-                    <span style={{color: THEME.success}}>+{entry.xp} XP</span>
-                  </div>
-                  <div style={styles.logBody}>
-                    {entry.quality === 'recovery' ? (
-                       <p><strong style={{color: THEME.accent}}>REVISION:</strong> {entry.revisionNote}</p>
-                    ) : (
-                      <>
-                        <p><strong style={{color: THEME.accent}}>LAB:</strong> {entry.labNote || "Skipped"}</p>
-                        <p><strong style={{color: THEME.accent}}>ACADEMIC:</strong> {entry.academicNote || "Skipped"}</p>
-                      </>
-                    )}
-                    <p><strong style={{color: THEME.accent}}>INTEL:</strong> {entry.newsNote}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       <div style={styles.layout}>
         {/* LEFT: PLAYER DATAFRAME */}
         <aside style={styles.card}>
-          <div className="glitch-text" style={styles.label}>[ SYSTEM_MONITOR_v11 ]</div>
+          <div className="glitch-text" style={styles.label}>[ SYSTEM_MONITOR_v13 ]</div>
           <div style={{...styles.status, color: penalty > 0 ? THEME.danger : THEME.accent}}>
             {penalty > 0 ? "STATUS: DEGRADED" : "STATUS: OPTIMAL"}
           </div>
@@ -191,8 +216,15 @@ export default function CompleteCyberSystem() {
             <div style={styles.totalXp}>TOTAL LIFETIME XP: {xp}</div>
           </div>
 
-          <button onClick={() => setShowArchive(true)} style={styles.archiveBtn}>ACCESS QUEST ARCHIVE</button>
-          <button onClick={handleHardReset} style={styles.resetBtn}>WIPE_SYSTEM_DATA</button>
+          {/* This button now switches the view to the Tailwind Archive! */}
+          <button onClick={() => setCurrentView('archive')} style={styles.archiveBtn}>ACCESS QUEST ARCHIVE</button>
+          
+          <input type="file" accept=".json" ref={fileInputRef} style={{ display: 'none' }} onChange={handleRestore} />
+          
+          <div style={{display: 'flex', gap: '10px', marginTop: '15px'}}>
+            <button onClick={() => fileInputRef.current?.click()} style={styles.restoreBtn}>RESTORE BACKUP</button>
+            <button onClick={handleHardReset} style={styles.resetBtn}>WIPE DATA</button>
+          </div>
         </aside>
 
         {/* CENTER: INPUT HUD */}
@@ -203,12 +235,12 @@ export default function CompleteCyberSystem() {
             <div style={styles.lockedBox}>
               <h1 className="glitch-text" style={{color: THEME.success}}>CORE_LOCKED</h1>
               <p style={{opacity: 0.6}}>UPLOADS SUSPENDED UNTIL NEXT CYCLE</p>
+              <p style={{fontSize: '0.7rem', color: THEME.warning, marginTop: '20px'}}>* A backup file was successfully downloaded to your device.</p>
             </div>
           ) : (
             <>
               <h2 style={styles.label}>DAILY_INTEGRITY_REPORT</h2>
               
-              {/* MOVED DROPDOWN TO THE TOP */}
               <div style={{marginBottom: '25px', paddingBottom: '15px', borderBottom: '1px solid #1a2233'}}>
                 <label style={{fontSize: '0.6rem', color: THEME.accent}}>1. SELECT_EXECUTION_MODE</label>
                 <select style={styles.select} value={quality} onChange={e=>setQuality(e.target.value)}>
@@ -219,13 +251,11 @@ export default function CompleteCyberSystem() {
               </div>
 
               {quality === "recovery" ? (
-                /* RECOVERY MODE UI */
                 <div style={styles.field}>
                   <label style={{color: workDetails.revision.length > 10 ? THEME.success : THEME.text}}>REVISION_PROTOCOL [Base 50 XP]</label>
                   <textarea style={styles.area} placeholder="What past concepts did you revise today? (Min 10 chars)..." value={workDetails.revision} onChange={e=>setWorkDetails({...workDetails, revision: e.target.value})} />
                 </div>
               ) : (
-                /* NORMAL MODE UI */
                 <>
                   <p style={{fontSize: '0.7rem', opacity: 0.5, marginBottom: '15px'}}>* Complete AT LEAST ONE primary objective (Lab or Academic).</p>
                   <div style={styles.field}>
@@ -239,14 +269,13 @@ export default function CompleteCyberSystem() {
                 </>
               )}
 
-              {/* NEWS IS ALWAYS REQUIRED */}
               <div style={styles.field}>
                 <label style={{color: tasks.news ? THEME.success : THEME.text}}><input type="checkbox" checked={tasks.news} onChange={()=>setTasks({...tasks, news: !tasks.news})}/> CYBER_NEWS_INTEL [10 XP]</label>
                 <input style={styles.input} placeholder="Today's mandatory headline (Min 5 chars)..." value={workDetails.news} onChange={e=>setWorkDetails({...workDetails, news: e.target.value})} />
               </div>
 
               <button style={{...styles.submit, borderColor: canSubmit ? THEME.success : '#222', color: canSubmit ? THEME.success : '#444', marginTop: '15px'}} disabled={!canSubmit} onClick={handleSubmit}>
-                {canSubmit ? `UPLOAD DATA [+${potentialXp} XP]` : "INTEGRITY_REQUIREMENTS_NOT_MET"}
+                {canSubmit ? `UPLOAD & AUTO-BACKUP [+${potentialXp} XP]` : "INTEGRITY_REQUIREMENTS_NOT_MET"}
               </button>
             </>
           )}
@@ -263,8 +292,7 @@ export default function CompleteCyberSystem() {
   );
 }
 
-// --- STYLES ---
-const styles = {
+const styles: Record<string, React.CSSProperties> = {
   container: { background: THEME.bg, color: THEME.text, minHeight: '100vh', fontFamily: "'Courier New', monospace", padding: '40px 20px', position: 'relative', overflow: 'hidden' },
   bgGrid: { position: 'fixed', top: -100, left: 0, right: 0, bottom: 0, backgroundImage: `linear-gradient(${THEME.accent}05 1px, transparent 1px), linear-gradient(90deg, ${THEME.accent}05 1px, transparent 1px)`, backgroundSize: '40px 40px', animation: 'gridMove 4s linear infinite', zIndex: 0 },
   scanline: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%)', backgroundSize: '100% 4px', zIndex: 10, pointerEvents: 'none' },
@@ -288,14 +316,7 @@ const styles = {
   select: { width: '100%', background: '#000', color: THEME.accent, border: '1px solid #1a2233', padding: '12px', marginTop: '5px', outline: 'none', cursor: 'pointer' },
   submit: { width: '100%', background: 'transparent', border: '1px solid', padding: '15px', fontWeight: 'bold', letterSpacing: '1px', cursor: 'pointer', transition: 'all 0.2s' },
   archiveBtn: { marginTop: '30px', width: '100%', background: `${THEME.accent}22`, border: `1px solid ${THEME.accent}`, color: THEME.accent, padding: '12px', cursor: 'pointer', fontWeight: 'bold', letterSpacing: '1px' },
-  resetBtn: { marginTop: '15px', width: '100%', background: 'transparent', border: 'none', color: THEME.danger, fontSize: '0.6rem', cursor: 'pointer', opacity: 0.4, letterSpacing: '1px' },
-  
-  // Modal Styles
-  modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(5px)', zIndex: 100, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' },
-  modalContent: { background: THEME.surface, border: `1px solid ${THEME.accent}`, width: '100%', maxWidth: '800px', height: '80%', borderRadius: '4px', padding: '30px', display: 'flex', flexDirection: 'column', boxShadow: `0 0 30px rgba(0, 242, 255, 0.1)` },
-  closeBtn: { background: 'transparent', border: 'none', color: THEME.danger, cursor: 'pointer', fontWeight: 'bold', fontSize: '1rem' },
-  logContainer: { overflowY: 'auto', flex: 1, paddingRight: '10px' },
-  logEntry: { background: 'rgba(0,0,0,0.4)', border: '1px solid #1a2233', padding: '15px', marginBottom: '15px', borderRadius: '4px' },
-  logHeader: { display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a2233', paddingBottom: '10px', marginBottom: '10px', fontSize: '0.8rem', opacity: 0.7 },
-  logBody: { fontSize: '0.85rem', lineHeight: '1.5' }
+  restoreBtn: { flex: 1, background: 'transparent', border: `1px solid ${THEME.warning}`, color: THEME.warning, fontSize: '0.6rem', cursor: 'pointer', padding: '8px', letterSpacing: '1px' },
+  resetBtn: { flex: 1, background: 'transparent', border: `1px solid ${THEME.danger}`, color: THEME.danger, fontSize: '0.6rem', cursor: 'pointer', padding: '8px', letterSpacing: '1px' },
+  lockedBox: { textAlign: 'center', padding: '40px 20px' }
 };
